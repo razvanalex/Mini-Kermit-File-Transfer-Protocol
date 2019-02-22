@@ -1,0 +1,272 @@
+-----------------------------------------------------------------------------
+                                 TEMA 1 - PC
+-----------------------------------------------------------------------------
+
+AUTOR: Smadu Razvan-Alexandru  325CB
+
+Fisiere incluse:
+  - ./link-emulator   - folderul cu emulatorul
+  - checker           - un "checker" facut de mine
+  - kreceiver.c
+  - ksender.c
+  - lib.h
+  - Makefile
+  - minikermit.c
+  - minikermit.h
+  - README
+  - run_experiment.sh
+  - run_experiment_mod.sh
+
+README
+  Descriere generala
+    Structurile folosite in protocolul MINIKERMIT se afla in fisierul
+    miniKermit.h, iar implementarile functiilor in miniKermit.c. Structura
+    TKermitPkt contine campurile unui packet de tip KERMIT (SOH, LEN, SEQ,
+    TYPE, DATA, CHECK si MARK) acestea fiind de tip byte (unsigned char), cu
+    exceptia campului CHECK care este de tip unsigned short. Aceasta structura
+    este folosita in transmiterea datelor, prin punerea acestora in payload-ul
+    mesajului. Structura TSYData este folosita in transmiterea parametrilor
+    conexiunii (utilizati fiind MAXL si TIME). Deasemena, exista functii de
+    prelucrare a acestor pachete pentru a face mai facila implementarea
+    protoculului. 
+
+  Constante definite in miniKermit.h:
+    - SUCCESS	   ( 0)		- valoarea de succes returnata de o functie
+    - E_TIMEOUT  (-1)		- a aparut un timeout in timpul prelucrarii/primirii
+                          datelor. Este tratat ca o eroare.
+    - E_CHKSUM   (-2)		- la verificare sumei de control se constata ca nu
+                          coincide cu valoarea raportata de pachet.
+    - E_NULL     (-3) 	- un pointer a devenit null in urma 
+                          prelucrarilor/alocarii.
+    - E_INVALID  (-4)		- un parametru/o variabila contine o valoare
+                          invalida (e.g. lungime data < 0)
+    - E_CONN     (-5)		- eroare de conexiune (e.g. prea multe esuari de
+                          transmitere al pachetelor)
+    - CREATE_BUF ( 1)		- parametru pentru functia receivePkt() pentru a
+                          crea un nou buffer.
+    - OLD_BUF    ( 0)   - parametru pentru functia receivePkt() pentru a
+                          utiliza bufferul creat anterior.
+    - AUTO_SIZE  (-1)		- parametru pentru functia receivePkt() pentru a
+                          creea un buffer de lungime variabila.
+    - MAX_SEQ    (64)		- valoarea maxima + 1 a campului SEQ (valorile sunt
+                          cuprinse intre 0 si MAX_SEQ - 1).
+    - NO_SEQ	   (-1)		- folosit pentru functia verboseSend() si indica
+                          faptul ca nu se doreste afisarea valorii SEQ.
+    - TYPE_S	   (S)    - indica un pachet de tip SEND-INIT
+    - TYPE_F	   (F)		- indica un pachet de tip FILE HEADER
+    - TYPE_D     (D)		- indica un pachet de tip DATA
+    - TYPE_Z     (Z)		- indica un pachet de tip END OF FILE
+    - TYPE_B     (B)    - indica un pachet de tip BREAK TRANSMISSION
+    - TYPE_Y     (Y)    - indica un pachet de tip ACK
+    - TYPE_N     (N)    - indica un pachet de tip NAK
+    - TYPE_E     (E)    - indica un pachet de tip ERROR (nu este folosit)
+  
+  Functii ajutatoare
+    - createKermitPkt(byte, const char, byte*, byte) creeaza un pachet de tip
+    TKermitPkt in care seteaza valorile implicite si seq, type, data si len in
+    functie de parametrii dati.
+      - createSYData(byte, byte) construieste o structura de tipul TSYData in 
+    care seteaza toti parametrii la valorile default si campurile MAXL si TIME 
+    la cele definite de utilizator.
+      - packData(msg*, void*, int) seteaza payload-ul mesajului la zerouri si
+    apoi pune datele date la adresa campului de tip void*. Lungimea datelor
+    este specificata in ultimul parametru (de tip int).
+    - loadPayload(msg*, TKermitPkt*) incarca pachetul kermit in payload-ul
+    mesajului (tot aici se calculeaza si suma de control) si se seteaza si
+    lungimea payload-ului.
+    - extractPayload(msg, TKermitPkt, int, int) face operatia inversa, adica
+    extrage structura din payload si pune data intr-un buffer alocat fie de
+    dimensiune variabila (la inceput cand se face initializarea conexiunii),
+    fie de dimensiune fixa (in timpul conexiunii). De asemenea, functia
+    returneaza erori daca este cazul (E_CHKSUM, E_INVALID, E_NULL), sau
+    SUCCESS in cazul in care nu exista erori. Dupa apelul acestei functii,
+    utilizatorul este obligat sa dea free() pe bufferul creat.
+    - receivePkt(char*, TKermitPkt, int, int, int, int) asteapta timp de
+    timeout milisecunde un mesaj. In cazul in care timpul expira, se afiseaza
+    un mesaj de eroare si se returneaza E_TIMEOUT, altfel se extrage structura
+    din payload si se afiseaza datele despre acel pachet, daca este cazul.
+
+    In fisierul minikermit.h exista definite functii care sa fiseze informatii
+    legate de transfer, functii ale caror nume incep cu "verbose". Acestea
+    afiseaza la sdtout detalii precum numele executabilului, informatii despre
+    pachet (numarul de secventa, daca este ACK sau NAK, un string oarecare etc).
+    Pentru a functiona, parametrul active trebuie setat la 1. Altfel, functiile
+    nu fac nimic.
+
+  Functii din ksender.c
+    - sendInitPkt(byte) creeaza un pachet de tip SEND-INIT si il trimite. In
+      campul data se pun constantele de conexiune.
+    - sendPkt(byte, const char, byte*, byte) creeaza un pachet de orice tip.
+      Se verifica lungimea sa se incadreze in limita maxima, se creeaza
+      pachetul si se transmite.
+    - initConnection(char*, byte, TKermitPkt*, int) trimite pachetul de tip
+      SEND-INIT catre receiver, pana cand receiver-ul il primeste corespunzator.
+      Daca functia receivePkt() a returnat o eroare, aceasta este tratata:
+        - daca exista eroare sau s-a primit un NAK, se incrementeaza fail
+          counter-ul;
+        - daca trebuie sa se trimita un nou pachet, se sterge bufferul
+          pachetului primit, daca acesta a fost creeat.
+        - daca eroarea primita este E_CHKSUM atunci se retrimite pachetul
+        - daca nu exista erori, se iese din functie cu valoarea secventei
+          urmatoare sau E_NULL daca pachetul e null.
+        - daca s-a primit un NAK, atunci se incrementeaza SEQ si se retransmite
+          pachetul.
+        - daca s-a depasit numarul de incercari, se termina transmisia.
+    - checkSeq(byte, byte) verifica daca urmatoarea secventa este cea
+      asteptata.
+    - sendPktWithCheck(char*, TKermitPkt*, int, int, byte*, const char, byte*
+      byte) trimite un pachet catre receiver, facand si verificarile necesare.
+      La primirea primului pachet (de ACK de tip SEND-INIT la data) se seteaza
+      dimensiunea maxima a bufferului (la prima trimitere, se creeaza). Se face
+      apoi verificare de erori asemanator ca la initConnection(). Functia
+      returneaza SUCCESS, in caz de success, si prin efect lateral modifica
+      SEQ la urmatoarea valoare.
+    - sendFile(char*, TKermitPkt*, char*, byte, int, int) trimite un fisier
+      complet catre receiver. Se deschide fisierul pentru citire, se aloca un
+      buffer in care se pune ce s-a citit. Se trimite apoi FILE HEADER-ul,
+      urmat apoi de continutul fisierului. Continutul este trimis in chunk-uri
+      de dimensiunea maxima MAXL. La final, cand s-a terminat de trimis
+      fisierul, se trimite un EOF si la final de transmisiune se trimite EOT.
+    - main(int, char**) contine algoritmul de transmisie. 
+  
+  Functii de kreceiver.c
+    - sendFirstACK(byte) trimite un ACK in care in data se afla informatia
+      legata de transmisiune. 
+    - sendEmptyData(byte, const char) trimite un pachet ACK/NAK in functie de
+      al doilea parametru.
+    - sendACK(byte) este alias pentru sendEmptyData(seq, TYPE_Y)
+    - sendNAK(byte) este alias pentru sendEmptyData(seq, TYPE_N)
+    - createFile(void*, int) creeaza un fisier nou cu numele dat ca parametru
+      la care prefixeaza "recv_". Functia returneaza file descriptorul.
+    - int recvStartInitPkt(char*, TKermitPkt*, int) asculta pentru un pachet
+     de timp SEND-INIT si verifica daca este trimis bine. In cazul in care
+     este primit bine (verificarea este ca la sender) se trimite un ACK cu
+     datele legate de transfer al carui SEQ este incrementat. Functia
+     returneaza SUCCESS sau E_TIMEOUT.
+   - interpretPkt(int, TKermitPkt) interpreteaza datele primite. La tipul F
+     creeaza un nou fisier, la tipul D pune datele in fisier, la tipul Z inchide
+     fisierul, iar la tipul B semnaleaza programul ca se incheie transmisia.
+   - sendLast(char*, byte, int) retrimite ultimul ACK sau NAK.
+   - useData(char*, TKermitPkt, int) foloseste datele, prin apelarea functiei
+     interpretPkt(), apoi trimite un ACK.
+   - checkSeq(byte, byte) verifica daca secventa urmatoare este cea asteptata.
+   - listenWithCheck(char*, byte*, int, int) asculta pentru un pachet si, in
+     cazul in care secventele nu coincind, se face drop pe pachet. Restul
+     erorilor sunt le fel abordate ca la sender. La E_CHKSUM se trimite un NAK
+     catre sender; la succes se folosesc datele si apoi se trimite un ACK, la
+     timeout se retrimite ultimul ACK.
+   - main(int char**) contine algoritmul de primire al datelor.
+
+
+  Mecanismul de transmisie al datelor (cazul ideal)
+    Mecanismul implementat este Stop and Wait.
+    Receiver-ul este deschis si intra in starea de ascultare. Sender-ul este
+    deschis si incearca sa realizeze initializarea conexiunii. Se trimite un
+    pachet de tip Send-Init cu secventa 0 si se asteapta raspuns. Receiver-ul
+    primeste pachetul si trimite un ACK in care se transmit datele de
+    conexiune pentru receiver. Sender-ul receptioneaza pachetul si verifica
+    daca exista erori si daca numarul de secventa este cel asteptat. Daca
+    totul este in regula, acesta o sa inceapa sa trimita fisierele, iar
+    receiver-ul intra in starea de ascultare, pentru a receptiona fisierele.
+    Pentru fiecare fisier de transmis se trimite fileheader-ul care contine
+    numele fisierului, si apoi se transmit pachete in care data are lungimea
+    maxima de MAXL. Ultimul pachet de date poate avea campul data mai mic.
+    In acelasi timp, receiver-ul primeste fileheader-ul, creeaza fisierul nou
+    si asteapta informatia de la sender, pe care apoi o pune in fisier. La
+    final, cand se transmite fisierul, se trimite un pachet de tip Z, care va
+    face ca receiver-ul sa inchida fisierul in care scrie. Dupa finalizarea
+    transmisiei de fisiere sender-ul trimite in pachet de tip B prin care ii
+    spune receiver-ului sa inchida transmisia.
+
+  Tratarea erorilor
+    Deoarece functia receivePkt intoarce erori (precum in assembly se activeaza
+    flaguri), aceasta face mult mai usoara verificarea erorilor din timpul
+    primirii/transmiterii pachetelor. 
+
+    In sender, daca s-a gasit o eroare, se incrementeaza contorul de esuari
+    (fail_counter) si daca:
+          - tipul pachetului este NAK, se reia transmisia aceluiasi fisier (se
+            trece la un nou ciclu in while)
+          - daca checksum-ul e gresit, se reia transmisia, ca la NAK
+          - daca nu sunt erori si nu s-a depasit MAX_NUM_FAIL, se trece la
+            trimiterea urmatorului pachet sau se incrementeaza secventa si se
+            trimite aceasi pachet.
+          - daca sunt prea multe esuari, se opreste conexiunea.
+  
+   In receiver se face in mod analog.
+
+   La timeout, se retransmite pachetul cu aceeasi secventa. In caz de corupere
+   de date se trimite un NAK, iar sender-ul o sa retransmita pachetul.
+  
+   Scheme generale de prelucrare a erorilor/timeout (D_X = data cu secventa X, 
+   A_X = ACK cu secventa X):
+
+     1) Erori de trimitere sender-receiver
+       
+       [sender]					    [receiver]
+       send D_1
+                            recv D_1 (CHK fails)
+                            send N_2
+       recv N_2
+       send D_3
+                            recv D_3 (contine informatia din D_1, corecta)
+     
+     2) Pachete pierdute
+        [sender]					  [receiver]
+      send D_1
+                 fail D_1
+                            timeout
+      timeout               send A_0
+      send D_1
+      recv A_0              recv D_1
+      send D_1              send A_2
+      recv A_2
+      send D_3				      recv D_1 - drop
+                            recv D_3
+                            send A_4 (de aici totul merge ca inainte)
+
+   In caz de timeout la final, cealalta entitate o sa incearca sa trimita
+   date/ACK-uri pana cand da si ea timeout.
+   
+   Algoritmul (ar trebui) prevede si daca un ACK/NAK este pierdut. In acest
+   caz, sender-ul o sa dea timeout si o sa retransmita pachetul. Intre timp,
+   si receiver-ul o sa dea timeout si o sa sa retransmita ACK-ul/NAK-ul.
+   Schema de functionare este urmatoarea:
+   [sender]                   [receiver]
+   send D_1             
+                              recv D_1
+                              send A_2
+                  fail A_2
+   timeout
+   send D_1                   timeout
+                              send A_2
+   recv A_2                   recv D_1 (expecting D_2 - drop packet)
+   send D_3            
+                              recv D_3
+                              send A_4 (de aici totul merge ca inainta)
+  
+  La NAK, mecanismul este similar, diferenta consta in faptul ca sender-ul o
+  sa primeasca un NAK, ce o sa faca sa retrimita acelasi pachet in loc de
+  urmatorul. (Mecanismul a fost simulat cu link_emulator modificat in a pierde
+  random pachete si pe calea receiver-sender).
+
+  Dupa mai mult 3 fail-uri (nu conteaza ce a cauzat fail la transmisie/receptie)
+  programul o sa dea Abort.
+
+
+  NOTA: Log-ul oferit de program ar trebui sa fie sugestiv si sa indice toate
+  operatiile pe care le fac sender-ul si receiver-ul. Dezactivarea lor se face
+  setand VERBOSE la 0. Acest lucru o sa duca la afisarea doar a erorilor (care
+  e facuta la stderr).
+  Trimitearea fisierelor pana in 50K ar trebui sa nu intampine probleme (poate 
+  doar timeout, din cauza retelei). Pentru fisiere mai mari a fost cam greu de 
+  testat din cauza ca buffer->size devenea zero inainte de a se trimite tot 
+  fisierul (>100K) de multe ori .
+
+  NOTA (checkerul facut de mine): in cazul in care se ajunge la 
+  "Too many fails! Abort!", fisierul curent o sa fie cel mai probabil incomplet 
+  (rareori poate fi si complet - daca se intampla dupa ce s-a terminta de 
+  transmis fisierul), iar cele care urmau sa fie transmise, nu vor mai fi 
+  trimise. Cresterea MAX_NUM_FAILS, sau scaderea LOSS si CORRUPT pot duce la 
+  rezultate mult mai bune (mai putine sanse sa dea ABORT si scade timpul de 
+  transfer).
